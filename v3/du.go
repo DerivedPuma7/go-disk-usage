@@ -1,15 +1,16 @@
-package v2
+package v3
 
 import (
 	"flag"
 	"fmt"
 	"io/fs"
 	"os"
-	"path"
+	"path/filepath"
+	"sync"
 	"time"
 )
 
-var verbose = flag.Bool("v", false, "show verbose progress messages")
+var vFlag = flag.Bool("v", false, "show verbose progress messages")
 
 func init() {
 	flag.Parse()
@@ -17,17 +18,20 @@ func init() {
 	if len(roots) == 0 {
 		roots = []string {"."}
 	}
-
+	
 	filesizes := make(chan int64)
+	var n sync.WaitGroup
+	for _, root := range roots {
+		n.Add(1)
+		go walkDir(root, &n, filesizes)
+	}
 	go func() {
-		for _, root := range roots {
-			walkDir(root, filesizes)
-		}
+		n.Wait()
 		close(filesizes)
 	}()
 
 	var tick <-chan time.Time
-	if *verbose {
+	if *vFlag {
 		tick = time.Tick(500 * time.Millisecond)
 	}
 
@@ -45,13 +49,16 @@ loop:
 			printDiskUsage(nFiles, nBytes)
 		}
 	}
+	printDiskUsage(nFiles, nBytes)
 }
 
-func walkDir(dir string, fileSizes chan<- int64) {
+func walkDir(dir string, n *sync.WaitGroup, fileSizes chan<- int64) {
+	defer n.Done()
 	for _, entry := range dirents(dir) {
 		if entry.IsDir() {
-			subDir := path.Join(dir, entry.Name())
-			walkDir(subDir, fileSizes)
+			n.Add(1)
+			subDir := filepath.Join(dir, entry.Name())
+			go walkDir(subDir, n, fileSizes)
 		} else {
 			fileInfo, _ := entry.Info()
 			fileSizes <- fileInfo.Size()
@@ -59,7 +66,11 @@ func walkDir(dir string, fileSizes chan<- int64) {
 	}
 }
 
+var sema = make(chan struct{}, 20)
 func dirents(dir string) []fs.DirEntry {
+	sema <- struct{}{}
+	defer func() { <-sema }()
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "du3: %v\n", err)
