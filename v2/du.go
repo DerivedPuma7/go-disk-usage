@@ -12,10 +12,8 @@ import (
 var verbose = flag.Bool("v", false, "show verbose progress messages")
 
 func init() {
-	fmt.Println("ola")
 	flag.Parse()
-	// roots := flag.Args()
-	roots := []string {"/usr"}
+	roots := flag.Args()
 	if len(roots) == 0 {
 		roots = []string {"."}
 	}
